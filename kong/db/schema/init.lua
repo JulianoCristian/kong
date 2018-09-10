@@ -1086,7 +1086,11 @@ function Schema:process_auto_fields(input, context, nulls)
 
     local field_value = output[key]
 
-    if field_value ~= nil then
+    if (field_value == nil and field.default ~= nil) or
+       (field_value == null and field.nullable == false) then
+      handle_missing_field(key, field, output)
+
+    elseif field_value ~= nil then
       local field_type  = field.type
       if field_type == "array" then
         output[key] = make_array(field_value)
