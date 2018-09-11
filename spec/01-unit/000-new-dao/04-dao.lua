@@ -3,6 +3,8 @@ local DAO = require("kong.db.dao.init")
 local errors = require("kong.db.errors")
 local utils = require("kong.tools.utils")
 
+local null = ngx.null
+
 local nullable_schema_definition = {
   name = "Foo",
   primary_key = { "a" },
@@ -11,6 +13,7 @@ local nullable_schema_definition = {
     { b = { type = "string", default = "hello" }, },
     { u = { type = "string" }, },
     { r = { type = "record",
+            nullable = true,
             fields = {
               { f1 = { type = "number" } },
               { f2 = { type = "string", default = "world" } },
@@ -34,6 +37,7 @@ local not_nullable_schema_definition = {
 }
 
 local mock_db = {}
+
 
 describe("DAO", function()
 
@@ -83,7 +87,7 @@ describe("DAO", function()
       -- mock strategy
       local strategy = {
         select = function()
-          return { a = 42, b = ngx.null, r = { f1 = 10, f2 = ngx.null } }
+          return { a = 42, b = null, r = { f1 = 10, f2 = null } }
         end,
       }
 
@@ -102,7 +106,7 @@ describe("DAO", function()
       -- mock strategy
       local strategy = {
         select = function()
-          return { a = 42, b = ngx.null, r = { f1 = 10, f2 = ngx.null } }
+          return { a = 42, b = null, r = { f1 = 10, f2 = null } }
         end,
       }
 
@@ -110,9 +114,9 @@ describe("DAO", function()
 
       local row = dao:select({ a = 42 }, { nulls = true })
       assert.same(42, row.a)
-      assert.same(ngx.null, row.b)
+      assert.same(null, row.b)
       assert.same(10, row.r.f1)
-      assert.same(ngx.null, row.r.f2)
+      assert.same(null, row.r.f2)
     end)
   end)
 
@@ -139,7 +143,7 @@ describe("DAO", function()
       local row, err = dao:update({ a = 42 }, { u = "foo" })
       assert.falsy(err)
       -- defaults are applied when returning the full updated entity
-      assert.same({ a = 42, b = "hello", u = "foo", r = nil }, row)
+      assert.same({ a = 42, b = "hello", u = "foo", r = { f2 = "world" } }, row)
 
       -- likewise for partial record update:
 
@@ -170,9 +174,9 @@ describe("DAO", function()
       local row, err = dao:update({ a = 42 }, { u = "foo" })
       assert.falsy(err)
       -- defaults are applied when returning the full updated entity
-      assert.same({ a = 42, b = "hello", u = "foo", r = nil }, row)
+      assert.same({ a = 42, b = "hello", u = "foo", r = { f2 = "world" } }, row)
 
-      -- likewise for partial record update:
+      -- likewise for record update:
 
       data = { a = 42, b = nil, u = nil, r = nil }
       row, err = dao:update({ a = 43 }, { u = "foo", r = { f1 = 10 } })
@@ -186,7 +190,7 @@ describe("DAO", function()
       -- mock strategy
       local strategy = {
         update = function()
-          return { a = 42, b = ngx.null, r = { f1 = 10, f2 = ngx.null } }
+          return { a = 42, b = null, r = { f1 = 10, f2 = null } }
         end,
       }
 
@@ -203,19 +207,101 @@ describe("DAO", function()
       local schema = assert(Schema.new(nullable_schema_definition))
 
       -- mock strategy
+      local data
       local strategy = {
-        update = function()
-          return { a = 42, b = ngx.null, r = { f1 = 10, f2 = ngx.null } }
+        update = function(_, _, value)
+          data = utils.deep_merge(data, value)
+          return data
         end,
       }
 
       local dao = DAO.new(mock_db, schema, strategy, errors)
 
-      local row = dao:update({ a = 42 }, { u = "foo" }, { nulls = true })
-      assert.same(42, row.a)
-      assert.same(ngx.null, row.b)
-      assert.same(10, row.r.f1)
-      assert.same(ngx.null, row.r.f2)
+      data = { a = 42, b = null, u = null, r = null }
+      local row, err = dao:update({ a = 42 }, { u = "foo" }, { nulls = true })
+      assert.falsy(err)
+      assert.same({ a = 42, b = null, u = "foo", r = null }, row)
+    end)
+
+    it("sets default in r.f2 when setting r.f1 and r is currently nil", function()
+      local schema = assert(Schema.new(nullable_schema_definition))
+
+      -- mock strategy
+      local data
+      local strategy = {
+        update = function(_, _, value)
+          data = utils.deep_merge(data, value)
+          return data
+        end,
+      }
+
+      local dao = DAO.new(mock_db, schema, strategy, errors)
+
+      data = { a = 42, b = null, u = null, r = nil }
+      local row, err = dao:update({ a = 43 }, { u = "foo", r = { f1 = 10 } }, { nulls = true })
+      assert.falsy(err)
+      assert.same({ a = 42, b = null, u = "foo", r = { f1 = 10, f2 = "world" } }, row)
+    end)
+
+    it("sets default in r.f2 when setting r.f1 and r is currently nil", function()
+      local schema = assert(Schema.new(not_nullable_schema_definition))
+
+      -- mock strategy
+      local data
+      local strategy = {
+        update = function(_, _, value)
+          data = utils.deep_merge(data, value)
+          return data
+        end,
+      }
+
+      local dao = DAO.new(mock_db, schema, strategy, errors)
+
+      data = { a = 42, b = null, u = null, r = nil }
+      local row, err = dao:update({ a = 43 }, { u = "foo", r = { f1 = 10 } }, { nulls = true })
+      assert.falsy(err)
+      assert.same({ a = 42, b = "hello", u = "foo", r = { f1 = 10, f2 = "world" } }, row)
+    end)
+
+    it("sets default in r.f2 when setting r.f1 and r is currently null", function()
+      local schema = assert(Schema.new(nullable_schema_definition))
+
+      -- mock strategy
+      local data
+      local strategy = {
+        update = function(_, _, value)
+          data = utils.deep_merge(data, value)
+          return data
+        end,
+      }
+
+      local dao = DAO.new(mock_db, schema, strategy, errors)
+
+      data = { a = 42, b = null, u = null, r = null }
+      local row, err = dao:update({ a = 43 }, { u = "foo", r = { f1 = 10 } }, { nulls = true })
+      assert.falsy(err)
+      assert.same({ a = 42, b = null, u = "foo", r = { f1 = 10, f2 = "world" } }, row)
+    end)
+
+    it("preserves null in r.f2 when setting r.f1", function()
+      local schema = assert(Schema.new(nullable_schema_definition))
+
+      -- mock strategy
+      local data
+      local strategy = {
+        update = function(_, _, value)
+          data = utils.deep_merge(data, value)
+          return data
+        end,
+      }
+
+      local dao = DAO.new(mock_db, schema, strategy, errors)
+
+      -- setting r.f2 as an explicit null
+      data = { a = 42, b = null, u = null, r = { f1 = 9, f2 = null } }
+      local row, err = dao:update({ a = 43 }, { u = "foo", r = { f1 = 10, f2 = null } }, { nulls = true })
+      assert.falsy(err)
+      assert.same({ a = 42, b = null, u = "foo", r = { f1 = 10, f2 = null } }, row)
     end)
   end)
 

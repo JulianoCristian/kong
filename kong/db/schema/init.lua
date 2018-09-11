@@ -701,22 +701,19 @@ end
 --- Given missing field named `k`, with definition `field`,
 -- fill its slot in `entity` with an appropriate default value,
 -- if possible.
--- @param k The field name.
 -- @param field The field definition table.
--- @param entity The entity object where key `k` is missing.
-local function handle_missing_field(k, field, entity)
+local function handle_missing_field(field, value)
   if field.default ~= nil then
-    entity[k] = tablex.deepcopy(field.default)
-    return
+    return tablex.deepcopy(field.default)
   end
 
   -- If `required`, it will fail later.
   -- If `nilable` (metaschema only), a default value is not necessary.
   if field.required or field.nilable then
-    return
+    return value
   end
 
-  entity[k] = default_value(field)
+  return default_value(field)
 end
 
 
@@ -1048,6 +1045,48 @@ local function make_set(set)
 end
 
 
+local function adjust_field_for_update(field, value, nulls)
+  if field.type == "record" and value ~= null
+       and not (field.nullable and value == nil) then
+    local field_schema = get_field_schema(field)
+    return field_schema:process_auto_fields(value or {}, "update", nulls)
+  end
+  if value == nil then
+    return nil
+  end
+  if field.type == "array" then
+    return make_array(value)
+  end
+  if field.type == "set" then
+    return make_set(value)
+  end
+
+  return value
+end
+
+
+local function adjust_field_for_context(field, value, context, nulls)
+  if value == null and field.nullable == false then
+    return handle_missing_field(field, value)
+  end
+  if field.type == "record" and value ~= null then
+    local field_schema = get_field_schema(field)
+    return field_schema:process_auto_fields(value or {}, context, nulls)
+  end
+  if value == nil then
+    return handle_missing_field(field, value)
+  end
+  if field.type == "array" then
+    return make_array(value)
+  end
+  if field.type == "set" then
+    return make_set(value)
+  end
+
+  return value
+end
+
+
 --- Given a table, update its fields whose schema
 -- definition declares them as `auto = true`,
 -- based on its CRUD operation context, and set
@@ -1087,28 +1126,10 @@ function Schema:process_auto_fields(input, context, nulls)
       end
     end
 
-    local field_value = output[key]
-
-    if context ~= "update" and
-       ((field_value == nil and field.default ~= nil) or
-       (field_value == null and field.nullable == false)) then
-      handle_missing_field(key, field, output)
-
-    elseif field_value ~= nil then
-      local field_type  = field.type
-      if field_type == "array" then
-        output[key] = make_array(field_value)
-      elseif field_type == "set" then
-        output[key] = make_set(field_value)
-      elseif field_type == "record" then
-        if field_value ~= null then
-          local field_schema = get_field_schema(field)
-          output[key] = field_schema:process_auto_fields(field_value, context, nulls)
-        end
-      end
-
-    elseif context ~= "update" then
-      handle_missing_field(key, field, output)
+    if context == "update" then
+      output[key] = adjust_field_for_update(field, output[key], nulls)
+    else
+      output[key] = adjust_field_for_context(field, output[key], context, nulls)
     end
 
     if context == "select" and output[key] == null and not nulls then
@@ -1364,14 +1385,23 @@ function Schema.new(definition)
   local self = copy(definition)
   setmetatable(self, Schema)
 
-  -- Also give access to fields by name
   for key, field in self:each_field() do
+
+    -- Also give access to fields by name
     self.fields[key] = field
+
     if field.type == "foreign" then
       local err
       field.schema, err = get_foreign_schema_for_field(field)
       if not field.schema then
         return nil, err
+      end
+
+    elseif field.type == "record" then
+      -- Make records non-nullable by default,
+      -- so that entities return their full structure on API queries.
+      if field.nullable == nil then
+        field.nullable = false
       end
     end
   end
