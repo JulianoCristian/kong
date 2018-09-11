@@ -1427,8 +1427,11 @@ describe("schema", function()
         redis_host = "example.com",
         redis_port = 80
       }))
-      assert.falsy(Test:validate_update({
+      assert.truthy(Test:validate_update({
         policy = "bla",
+      }))
+      assert.falsy(Test:validate_update({
+        policy = "redis",
       }))
     end)
 
