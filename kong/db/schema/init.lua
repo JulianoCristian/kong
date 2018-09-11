@@ -437,10 +437,10 @@ Schema.entity_checkers = {
   --                 then_match = { required = true } }
   -- ```
   conditional = {
-    field_sources = { "if_field", "then_field" },
+    field_sources = { "if_field" },
     fn = function(entity, arg, schema)
       local if_value = entity[arg.if_field]
-      local then_value = entity[arg.then_field]
+      local then_value = entity[arg.then_field] or null
 
       local if_merged = merge_field(schema.fields[arg.if_field], arg.if_match)
       local ok, _ = Schema.validate_field(schema, if_merged, if_value)
