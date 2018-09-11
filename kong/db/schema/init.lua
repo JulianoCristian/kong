@@ -437,7 +437,8 @@ Schema.entity_checkers = {
   --                 then_match = { required = true } }
   -- ```
   conditional = {
-    field_sources = { "if_field" },
+    field_sources = { "if_field", "then_field" },
+    required_fields = { ["if_field"] = true },
     fn = function(entity, arg, schema)
       local if_value = entity[arg.if_field]
       local then_value = entity[arg.then_field] or null
@@ -824,9 +825,11 @@ local function run_entity_check(self, name, input, arg)
   end
 
   local all_nil = true
+  local required_fields = checker.required_fields
   for _, fname in ipairs(fields_to_check) do
     if input[fname] == nil then
-      if not checker.run_with_missing_fields then
+      if not (checker.run_with_missing_fields or
+             (required_fields and not required_fields[fname])) then
         local err = validation_errors.REQUIRED_FOR_ENTITY_CHECK
         field_errors[fname] = err
         ok = false
